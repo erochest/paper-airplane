@@ -32,6 +32,9 @@ A Dispatch containing one Reply, by default the most recent Long Reply.
 A Dispatch containing the whole Session so far.
 _Avoid_: Transcript export
 
+**File Dispatch**:
+A Dispatch made from a Markdown file the user names, rather than from a Session.
+
 **Auto-Dispatch**:
 A per-Session mode, switched on by the user, in which each long Reply automatically becomes a Reply Dispatch.
 _Avoid_: Auto-send, watch mode
