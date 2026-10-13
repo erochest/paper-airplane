@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/core.ts";
@@ -27,9 +27,13 @@ afterEach(async () => {
 const sentAt = new Date(2026, 9, 13, 9, 5);
 
 function fly(...args: string[]) {
+  return flyIn(dir, ...args);
+}
+
+function flyIn(cwd: string, ...args: string[]) {
   return run(args, {
     env: { HOME: dir },
-    cwd: dir,
+    cwd,
     now: () => sentAt,
     transport: device,
     renderer,
@@ -56,14 +60,26 @@ test("fly file uploads the rendered Markdown to the Hangar under a timestamped n
   expect(new TextDecoder().decode(upload?.content)).toBe("%PDF-fake\nSome *design* notes.\n");
 });
 
-test("fly file prints the Dispatch's name and state as JSON", async () => {
+test("fly file prints the Dispatch's ID, name and state as JSON", async () => {
   const path = await markdownFile("notes.md", "Notes.\n");
 
   await fly("file", path, "--title", "Design notes");
 
   expect(out.map((line) => JSON.parse(line))).toEqual([
-    { name: "2026-10-13 09:05 Design notes", state: "landed" },
+    { id: renderer.requests[0]?.dispatchId, name: "2026-10-13 09:05 Design notes", state: "landed" },
   ]);
+});
+
+test("every Dispatch gets its own Dispatch ID, which is passed to the renderer", async () => {
+  const path = await markdownFile("notes.md", "Notes.\n");
+
+  await fly("file", path);
+  await fly("file", path);
+
+  const ids = renderer.requests.map((r) => r.dispatchId);
+  expect(ids).toHaveLength(2);
+  for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  expect(ids[0]).not.toBe(ids[1]);
 });
 
 test("without --title, the first heading names the Dispatch", async () => {
@@ -83,6 +99,29 @@ test("without --title or a heading, the file name names the Dispatch", async () 
   await fly("file", path);
 
   expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 meeting notes.v2"]);
+});
+
+test("the page-1 header shows the title, send time, project and kind", async () => {
+  const repo = join(dir, "paper-airplane");
+  await mkdir(join(repo, ".git"), { recursive: true });
+  await mkdir(join(repo, "docs", "plans"), { recursive: true });
+  await writeFile(join(repo, "docs", "plans", "plan.md"), "# Rollout plan\n");
+
+  await flyIn(join(repo, "docs", "plans"), "file", "plan.md");
+
+  expect(renderer.requests.map((r) => r.header)).toEqual([
+    { title: "Rollout plan", timestamp: "2026-10-13 09:05", project: "paper-airplane", kind: "File" },
+  ]);
+});
+
+test("outside a git repo, the header's project is the working directory's name", async () => {
+  const project = join(dir, "scratch notes");
+  await mkdir(project);
+  await writeFile(join(project, "notes.md"), "Notes.\n");
+
+  await flyIn(project, "file", "notes.md", "--title", "Notes");
+
+  expect(renderer.requests[0]?.header.project).toBe("scratch notes");
 });
 
 test("a relative path is read from the working directory", async () => {

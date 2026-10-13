@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { basename, extname, resolve } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 /** The `Paper Airplane` folder on the reMarkable where every Dispatch lands. */
@@ -7,8 +7,23 @@ export const HANGAR = "/Paper Airplane";
 
 const USAGE = "usage: fly file <path.md> [--title <title>]";
 
+export type DispatchKind = "Reply" | "Conversation" | "File";
+
+/** What the small header on a Dispatch's first page shows. */
+export interface PageHeader {
+  title: string;
+  /** `YYYY-MM-DD HH:MM`, matching the Dispatch's name. */
+  timestamp: string;
+  /** The repo or project the Dispatch came from. */
+  project: string;
+  kind: DispatchKind;
+}
+
 export interface RenderRequest {
   markdown: string;
+  /** The Dispatch's full ID, which the renderer embeds in the PDF metadata. */
+  dispatchId: string;
+  header: PageHeader;
 }
 
 /** Typesets a Dispatch's Markdown as a PDF. */
@@ -66,13 +81,16 @@ async function flyFile(argv: string[], deps: Deps): Promise<number> {
     return 1;
   }
   const title = values.title ?? firstHeading(markdown) ?? basename(fullPath, extname(fullPath));
+  const timestamp = formatTimestamp(deps.now());
   // The transport names documents after local files, so path separators can't appear.
-  const name = `${formatTimestamp(deps.now())} ${title}`.replace(/[/\\]/g, "-");
+  const name = `${timestamp} ${title}`.replace(/[/\\]/g, "-");
 
-  const pdf = await deps.renderer.render({ markdown });
+  const dispatchId = crypto.randomUUID();
+  const header: PageHeader = { title, timestamp, project: await projectName(deps.cwd), kind: "File" };
+  const pdf = await deps.renderer.render({ markdown, dispatchId, header });
   await deps.transport.ensureFolder(HANGAR);
   await deps.transport.upload(HANGAR, name, pdf);
-  deps.stdout(JSON.stringify({ name, state: "landed" }));
+  deps.stdout(JSON.stringify({ id: dispatchId, name, state: "landed" }));
   return 0;
 }
 
@@ -91,6 +109,24 @@ function firstHeading(markdown: string): string | undefined {
     if (heading) return heading;
   }
   return undefined;
+}
+
+/** The name of the git repo containing `cwd`, or of `cwd` itself when it isn't in one. */
+async function projectName(cwd: string): Promise<string> {
+  for (let dir = cwd; ; dir = dirname(dir)) {
+    // `.git` is a directory in a normal checkout and a file in a worktree.
+    if (await exists(join(dir, ".git"))) return basename(dir);
+    if (dirname(dir) === dir) return basename(cwd);
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** `YYYY-MM-DD HH:MM` in local time. */
