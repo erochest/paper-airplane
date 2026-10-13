@@ -8,11 +8,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] `fly file <path> --title <t>` renders an A5 PDF (pandoc GitHub-flavored Markdown reader feeding Typst) and uploads it to `/Paper Airplane`.
-- [ ] The Hangar is created on the device if it doesn't exist.
-- [ ] The document name is `YYYY-MM-DD HH:MM <title>` using the send time. Without `--title`, the first heading is used, then the file name.
-- [ ] The CLI prints a short machine-readable result: name and state.
-- [ ] Tests drive the CLI core with a fake transport and fake renderer and assert on what reached the fake device (folder, name, content).
-- [ ] One real-renderer test produces a valid A5 PDF. It is skipped when pandoc or Typst is missing.
-- [ ] External tools are started with argument arrays (no shell), and paths are built cross-platform.
-- [ ] A manual run sends a real file to the tablet.
+- [x] `fly file <path> --title <t>` renders an A5 PDF (pandoc GitHub-flavored Markdown reader feeding Typst) and uploads it to `/Paper Airplane`.
+- [x] The Hangar is created on the device if it doesn't exist.
+- [x] The document name is `YYYY-MM-DD HH:MM <title>` using the send time. Without `--title`, the first heading is used, then the file name.
+- [x] The CLI prints a short machine-readable result: name and state.
+- [x] Tests drive the CLI core with a fake transport and fake renderer and assert on what reached the fake device (folder, name, content).
+- [x] One real-renderer test produces a valid A5 PDF. It is skipped when pandoc or Typst is missing.
+- [x] External tools are started with argument arrays (no shell), and paths are built cross-platform.
+- [x] A manual run sends a real file to the tablet.
