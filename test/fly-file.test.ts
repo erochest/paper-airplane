@@ -159,3 +159,29 @@ test("a missing file is reported and nothing is sent", async () => {
   expect(out).toEqual([]);
   expect(device.uploads).toEqual([]);
 });
+
+test("a name already taken in the Hangar gets a counter, so no Dispatch overwrites another", async () => {
+  const path = await markdownFile("notes.md", "# Rollout plan\n");
+
+  for (let i = 0; i < 3; i++) expect(await fly("file", path)).toBe(0);
+
+  expect(err).toEqual([]);
+  expect(device.uploads.map((u) => u.name)).toEqual([
+    "2026-10-13 09:05 Rollout plan",
+    "2026-10-13 09:05 Rollout plan (2)",
+    "2026-10-13 09:05 Rollout plan (3)",
+  ]);
+  expect(out.map((line) => JSON.parse(line).name)).toEqual(device.uploads.map((u) => u.name));
+});
+
+test("the counter accounts for documents in the Hangar that this machine didn't send", async () => {
+  device.place("/Paper Airplane", "2026-10-13 09:05 Rollout plan");
+  device.place("/Paper Airplane", "2026-10-13 09:05 Rollout plan (2)");
+  // Same name, other folder: not a collision.
+  device.place("/Elsewhere", "2026-10-13 09:05 Rollout plan (3)");
+  const path = await markdownFile("notes.md", "# Rollout plan\n");
+
+  expect(await fly("file", path)).toBe(0);
+
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Rollout plan (3)"]);
+});

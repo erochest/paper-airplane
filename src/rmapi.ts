@@ -13,6 +13,16 @@ export class RmapiTransport implements Transport {
     await runTool(["rmapi", "-ni", "mkdir", folder]);
   }
 
+  async documentNames(folder: string): Promise<string[]> {
+    // Plain `ls` prints one `[f]\t<name>` (document) or `[d]\t<name>` (folder) line per entry.
+    const document = "[f]\t";
+    const listing = await runTool(["rmapi", "-ni", "ls", folder]);
+    return listing
+      .split("\n")
+      .filter((line) => line.startsWith(document))
+      .map((line) => line.slice(document.length));
+  }
+
   upload(folder: string, name: string, pdf: Uint8Array): Promise<void> {
     // rmapi names the document after the local file, minus its extension.
     // TODO(windows): names contain `HH:MM`, and Windows file names can't contain `:`.

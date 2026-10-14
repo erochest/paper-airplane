@@ -158,21 +158,21 @@ test("the Session Title is fixed at the Session's first Dispatch and reused afte
   expect(await fly("reply", "--title", "Ticket 04")).toBe(0);
 
   // The same Session again, now without --title: the title fixed in the Flight Log is used.
-  expect(await fly("reply")).toBe(0);
+  expect(await fly("reply", "--again")).toBe(0);
 
   expect(err).toEqual([]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15:01 Ticket 04", "2026-10-13 15:01 Ticket 04"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15:01 Ticket 04", "2026-10-13 15:01 Ticket 04 (2)"]);
 });
 
 test("a Session Title fixed in the Flight Log is preferred over Claude Code's generated title", async () => {
   await inSession("trailing-short", "renamed-session");
   expect(await fly("reply", "--title", "Sending rollout")).toBe(0);
 
-  expect(await fly("reply")).toBe(0);
+  expect(await fly("reply", "--again")).toBe(0);
 
   expect(device.uploads.map((u) => u.name)).toEqual([
     "2026-10-13 13:31 Sending rollout",
-    "2026-10-13 13:31 Sending rollout",
+    "2026-10-13 13:31 Sending rollout (2)",
   ]);
 });
 
@@ -236,14 +236,14 @@ test("a last transcript line that Claude Code is still writing is ignored", asyn
 test("--title on a later Dispatch names only that Dispatch; the fixed Session Title stays", async () => {
   await inSession("trailing-short");
   expect(await fly("reply")).toBe(0);
-  expect(await fly("reply", "--title", "One-off name")).toBe(0);
+  expect(await fly("reply", "--again", "--title", "One-off name")).toBe(0);
 
-  expect(await fly("reply")).toBe(0);
+  expect(await fly("reply", "--again")).toBe(0);
 
   expect(device.uploads.map((u) => u.name)).toEqual([
     "2026-10-13 13:31 Rollout plan for sending",
     "2026-10-13 13:31 One-off name",
-    "2026-10-13 13:31 Rollout plan for sending",
+    "2026-10-13 13:31 Rollout plan for sending (2)",
   ]);
 });
 
@@ -336,4 +336,32 @@ test("fly replies gives timestamps in local time with the UTC offset", async () 
   }
 
   expect(JSON.parse(out.join("\n"))[0].timestamp).toBe("2026-10-13T09:31:15-04:00");
+});
+
+test("a Reply that already landed is refused, naming the earlier Dispatch and when it was sent", async () => {
+  await inSession("trailing-short");
+  expect(await fly("reply")).toBe(0);
+
+  expect(await fly("reply")).toBe(1);
+
+  expect(err).toEqual([
+    'fly: this Reply already landed as "2026-10-13 13:31 Rollout plan for sending", sent 2026-10-14 08:00; ' +
+      "pass --again to send another copy; nothing was sent",
+  ]);
+  expect(device.uploads).toHaveLength(1);
+  expect(await flyLog("--all")).toHaveLength(1);
+});
+
+test("--again sends a Reply that already landed as a new Dispatch with its own ID", async () => {
+  const { sessionId } = await inSession("trailing-short");
+  expect(await fly("reply")).toBe(0);
+
+  expect(await fly("reply", "--again")).toBe(0);
+
+  expect(err).toEqual([]);
+  const [first, second] = renderer.requests.map((r) => r.dispatchId);
+  expect(second).not.toBe(first);
+  const dispatches = await flyLog("--session", sessionId);
+  expect(dispatches.map((d: { id: string }) => d.id)).toEqual([first, second]);
+  expect(new Set(dispatches.map((d: { replyRef: string }) => d.replyRef)).size).toBe(1);
 });

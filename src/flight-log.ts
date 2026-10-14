@@ -66,6 +66,12 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS dispatches_by_session ON dispatches (session_id);
 `;
 
+const SELECT_DISPATCHES = `
+  SELECT id, kind, host, session_id AS sessionId, reply_ref AS replyRef,
+         project_path AS projectPath, git_remote AS gitRemote, session_title AS sessionTitle,
+         name, written_at AS writtenAt, sent_at AS sentAt, state, pdf_path AS pdfPath
+  FROM dispatches`;
+
 /**
  * The record of every Dispatch, in one SQLite database for the whole user account (ADR 0003).
  * Concurrent `fly` processes rely on SQLite's own locking.
@@ -134,6 +140,20 @@ export class FlightLog {
     );
   }
 
+  /** The most recent landed Dispatch of the Reply `replyRef` from the Session, if there is one. */
+  landedReply(host: string, sessionId: string, replyRef: string): DispatchRecord | null {
+    return (
+      this.db
+        .query<DispatchRecord, [string, string, string]>(
+          `${SELECT_DISPATCHES}
+           WHERE host = ? AND session_id = ? AND reply_ref = ? AND kind = 'Reply' AND state = 'landed'
+           ORDER BY sent_at DESC, seq DESC
+           LIMIT 1`,
+        )
+        .get(host, sessionId, replyRef) ?? null
+    );
+  }
+
   /** Dispatches matching every field of `filter`, oldest first. */
   dispatches(filter: LogFilter): DispatchRecord[] {
     const where: string[] = [];
@@ -148,10 +168,7 @@ export class FlightLog {
     }
     return this.db
       .query<DispatchRecord, string[]>(
-        `SELECT id, kind, host, session_id AS sessionId, reply_ref AS replyRef,
-                project_path AS projectPath, git_remote AS gitRemote, session_title AS sessionTitle,
-                name, written_at AS writtenAt, sent_at AS sentAt, state, pdf_path AS pdfPath
-         FROM dispatches
+        `${SELECT_DISPATCHES}
          ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY sent_at, seq`,
       )

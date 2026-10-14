@@ -14,7 +14,7 @@ export const HANGAR = "/Paper Airplane";
 
 const FILE_USAGE = "usage: fly file <path.md> [--title <title>]";
 const LOG_USAGE = "usage: fly log [--all | --session <id>]";
-const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>]";
+const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>] [--again]";
 const REPLIES_USAGE = "usage: fly replies";
 const USAGE = `${REPLY_USAGE}\n${REPLIES_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
 
@@ -46,6 +46,9 @@ export interface Renderer {
 export interface Transport {
   /** Creates the folder if it doesn't already exist. */
   ensureFolder(folder: string): Promise<void>;
+  /** The names of the documents (not folders) directly in `folder`. */
+  documentNames(folder: string): Promise<string[]>;
+  /** Uploads a new document; `name` must not already be taken in `folder`. */
   upload(folder: string, name: string, pdf: Uint8Array): Promise<void>;
 }
 
@@ -84,9 +87,12 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
 }
 
 async function flyReply(argv: string[], deps: Deps): Promise<number> {
-  let values: { reply?: string; title?: string };
+  let values: { reply?: string; title?: string; again?: boolean };
   try {
-    ({ values } = parseArgs({ args: argv, options: { reply: { type: "string" }, title: { type: "string" } } }));
+    ({ values } = parseArgs({
+      args: argv,
+      options: { reply: { type: "string" }, title: { type: "string" }, again: { type: "boolean" } },
+    }));
   } catch {
     deps.stderr(REPLY_USAGE);
     return 2;
@@ -101,11 +107,18 @@ async function flyReply(argv: string[], deps: Deps): Promise<number> {
         : `this Session has no Long Reply (more than ${LONG_REPLY_WORDS} words) to send; nothing was sent`,
     );
   }
+  const { landed, fixedTitle } = await withFlightLog(deps, async (log) => ({
+    landed: log.landedReply(session.host, session.id, reply.ref),
+    fixedTitle: log.sessionTitle(session.host, session.id),
+  }));
+  if (landed !== null && !values.again) {
+    throw new UserError(
+      `this Reply already landed as "${landed.name}", sent ${formatTimestamp(new Date(landed.sentAt))}; ` +
+        "pass --again to send another copy; nothing was sent",
+    );
+  }
   // `--title` names this Dispatch only; the Session Title fixed at the first Dispatch stays.
-  const title =
-    values.title ??
-    (await withFlightLog(deps, async (log) => log.sessionTitle(session.host, session.id))) ??
-    session.title;
+  const title = values.title ?? fixedTitle ?? session.title;
   if (title === null) {
     throw new UserError("this Session has no Session Title yet; run again with --title <title>");
   }
@@ -182,13 +195,14 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const writtenAt = content.writtenAt ?? sentAt;
   const timestamp = formatTimestamp(writtenAt);
   // The transport names documents after local files, so path separators can't appear.
-  const name = `${timestamp} ${title}`.replace(/[/\\]/g, "-");
+  const baseName = `${timestamp} ${title}`.replace(/[/\\]/g, "-");
 
   const dispatchId = crypto.randomUUID();
   const projectPath = await projectRoot(deps.cwd);
   const header: PageHeader = { title, timestamp, project: basename(projectPath), kind };
   const pdf = await deps.renderer.render({ markdown, dispatchId, header });
   await deps.transport.ensureFolder(HANGAR);
+  const name = freeName(baseName, new Set(await deps.transport.documentNames(HANGAR)));
   await deps.transport.upload(HANGAR, name, pdf);
   await withFlightLog(deps, async (log) =>
     log.record({
@@ -209,6 +223,19 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   );
   deps.stdout(JSON.stringify({ id: dispatchId, name, state: "landed" }));
   return 0;
+}
+
+/**
+ * `baseName`, or the first of `baseName (2)`, `baseName (3)`, … not in `taken`. Collisions are
+ * resolved here rather than left to the transport, so no Dispatch ever replaces another. Two `fly`
+ * processes sending the same name at the same moment can still both pick it; that is left open.
+ */
+function freeName(baseName: string, taken: Set<string>): string {
+  if (!taken.has(baseName)) return baseName;
+  for (let n = 2; ; n++) {
+    const name = `${baseName} (${n})`;
+    if (!taken.has(name)) return name;
+  }
 }
 
 async function flyLog(argv: string[], deps: Deps): Promise<number> {
