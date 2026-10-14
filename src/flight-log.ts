@@ -125,6 +125,15 @@ export class FlightLog {
       .immediate();
   }
 
+  /** The Session Title fixed at the Session's first Dispatch, if it has had one. */
+  sessionTitle(host: string, sessionId: string): string | null {
+    return (
+      this.db
+        .query<{ title: string }, [string, string]>("SELECT title FROM sessions WHERE host = ? AND session_id = ?")
+        .get(host, sessionId)?.title ?? null
+    );
+  }
+
   /** Dispatches matching every field of `filter`, oldest first. */
   dispatches(filter: LogFilter): DispatchRecord[] {
     const where: string[] = [];
