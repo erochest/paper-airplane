@@ -201,7 +201,7 @@ test("an unrecognised transcript record is a loud error, not silently dropped", 
 test("fly reply outside an agent Session says so", async () => {
   expect(await fly("reply")).toBe(1);
 
-  expect(err).toEqual(["fly: not inside an agent Session (CLAUDE_CODE_SESSION_ID isn't set)"]);
+  expect(err).toEqual(["fly: not inside an agent Session (neither CLAUDE_CODE_SESSION_ID nor PI_SESSION_FILE is set)"]);
 });
 
 test("a Session whose transcript can't be found says where fly looked", async () => {
