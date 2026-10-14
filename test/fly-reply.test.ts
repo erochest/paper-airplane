@@ -246,3 +246,94 @@ test("--title on a later Dispatch names only that Dispatch; the fixed Session Ti
     "2026-10-13 13:31 Rollout plan for sending",
   ]);
 });
+
+test("fly replies lists every Reply in the Session with what an agent needs to pick one", async () => {
+  await inSession("trailing-short");
+
+  expect(await fly("replies")).toBe(0);
+
+  expect(err).toEqual([]);
+  expect(JSON.parse(out.join("\n"))).toEqual([
+    {
+      ref: "00000000-0000-4000-8000-000000000006",
+      timestamp: "2026-10-13T13:31:15+00:00",
+      words: 395,
+      long: true,
+      preview: "Rollout plan",
+    },
+    { ref: "00000000-0000-4000-8000-000000000013", timestamp: "2026-10-13T13:32:00+00:00", words: 1, long: false, preview: "Done." },
+    {
+      ref: "00000000-0000-4000-8000-000000000018",
+      timestamp: "2026-10-13T13:32:40+00:00",
+      words: 13,
+      long: false,
+      preview: "Glad it helps. Let me know when you want to start stage one.",
+    },
+  ]);
+  expect(device.uploads).toEqual([]);
+});
+
+test("fly reply --reply sends the named Reply, even one that is short and not the most recent", async () => {
+  const { sessionId } = await inSession("trailing-short");
+
+  expect(await fly("reply", "--reply", "00000000-0000-4000-8000-000000000013")).toBe(0);
+
+  expect(err).toEqual([]);
+  expect(renderer.requests.map((r) => r.markdown)).toEqual(["Done."]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13:32 Rollout plan for sending"]);
+  const [dispatch] = await flyLog("--session", sessionId);
+  expect(dispatch.replyRef).toBe("00000000-0000-4000-8000-000000000013");
+});
+
+test("fly reply --reply with an unknown reference says so and sends nothing", async () => {
+  await inSession("trailing-short");
+
+  expect(await fly("reply", "--reply", "no-such-reply")).toBe(1);
+
+  expect(err).toEqual([
+    "fly: this Session has no Reply with reference no-such-reply; run fly replies to list them; nothing was sent",
+  ]);
+  expect(device.uploads).toEqual([]);
+  expect(await flyLog("--all")).toEqual([]);
+});
+
+test("Reply references stay the same as the Session goes on", async () => {
+  const { transcript } = await inSession("trailing-short");
+  await fly("replies");
+  const before = JSON.parse(out.join("\n"));
+
+  // The Session goes on with another prompt and Reply.
+  const record = (fields: object) => JSON.stringify({ isSidechain: false, sessionId: "session-trailing-short", ...fields });
+  await appendFile(
+    transcript,
+    [
+      record({ type: "user", uuid: "later-prompt", timestamp: "2026-10-13T14:00:00.000Z", message: { role: "user", content: "One more thing." } }),
+      record({
+        type: "assistant",
+        uuid: "later-reply",
+        timestamp: "2026-10-13T14:00:10.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "Sure." }] },
+      }),
+    ].join("\n") + "\n",
+  );
+  out = [];
+  await fly("replies");
+  const after = JSON.parse(out.join("\n"));
+
+  expect(after.slice(0, before.length)).toEqual(before);
+  expect(after.map((r: { ref: string }) => r.ref).slice(before.length)).toEqual(["later-reply"]);
+  expect(await fly("reply", "--reply", before[0].ref)).toBe(0);
+  expect(renderer.requests.map((r) => r.markdown)).toEqual([await expectedReply("trailing-short")]);
+});
+
+test("fly replies gives timestamps in local time with the UTC offset", async () => {
+  await inSession("trailing-short");
+  process.env.TZ = "America/New_York";
+  try {
+    expect(await fly("replies")).toBe(0);
+  } finally {
+    process.env.TZ = "UTC";
+  }
+
+  expect(JSON.parse(out.join("\n"))[0].timestamp).toBe("2026-10-13T09:31:15-04:00");
+});

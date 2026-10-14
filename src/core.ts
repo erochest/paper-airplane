@@ -5,7 +5,8 @@ import { parseArgs } from "node:util";
 import { UserError } from "./errors.ts";
 import { runTool } from "./exec.ts";
 import { FlightLog, type LogFilter } from "./flight-log.ts";
-import { LONG_REPLY_WORDS, mostRecentLongReply } from "./selection.ts";
+import { firstHeading } from "./markdown.ts";
+import { LONG_REPLY_WORDS, findReply, mostRecentLongReply, replySummaries } from "./selection.ts";
 import { currentSession } from "./session.ts";
 
 /** The `Paper Airplane` folder on the reMarkable where every Dispatch lands. */
@@ -13,8 +14,9 @@ export const HANGAR = "/Paper Airplane";
 
 const FILE_USAGE = "usage: fly file <path.md> [--title <title>]";
 const LOG_USAGE = "usage: fly log [--all | --session <id>]";
-const REPLY_USAGE = "usage: fly reply [--title <title>]";
-const USAGE = `${REPLY_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
+const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>]";
+const REPLIES_USAGE = "usage: fly replies";
+const USAGE = `${REPLY_USAGE}\n${REPLIES_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
 
 export type DispatchKind = "Reply" | "Conversation" | "File";
 
@@ -64,6 +66,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
     switch (command) {
       case "reply":
         return await flyReply(rest, deps);
+      case "replies":
+        return await flyReplies(rest, deps);
       case "file":
         return await flyFile(rest, deps);
       case "log":
@@ -80,18 +84,22 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
 }
 
 async function flyReply(argv: string[], deps: Deps): Promise<number> {
-  let values: { title?: string };
+  let values: { reply?: string; title?: string };
   try {
-    ({ values } = parseArgs({ args: argv, options: { title: { type: "string" } } }));
+    ({ values } = parseArgs({ args: argv, options: { reply: { type: "string" }, title: { type: "string" } } }));
   } catch {
     deps.stderr(REPLY_USAGE);
     return 2;
   }
 
   const session = await currentSession(deps.env, deps.cwd);
-  const reply = mostRecentLongReply(session);
+  const reply = values.reply !== undefined ? findReply(session, values.reply) : mostRecentLongReply(session);
   if (reply === undefined) {
-    throw new UserError(`this Session has no Long Reply (more than ${LONG_REPLY_WORDS} words) to send; nothing was sent`);
+    throw new UserError(
+      values.reply !== undefined
+        ? `this Session has no Reply with reference ${values.reply}; run fly replies to list them; nothing was sent`
+        : `this Session has no Long Reply (more than ${LONG_REPLY_WORDS} words) to send; nothing was sent`,
+    );
   }
   // `--title` names this Dispatch only; the Session Title fixed at the first Dispatch stays.
   const title =
@@ -109,6 +117,18 @@ async function flyReply(argv: string[], deps: Deps): Promise<number> {
     writtenAt: reply.timestamp,
     source: { host: session.host, sessionId: session.id, replyRef: reply.ref },
   });
+}
+
+async function flyReplies(argv: string[], deps: Deps): Promise<number> {
+  try {
+    parseArgs({ args: argv, options: {} });
+  } catch {
+    deps.stderr(REPLIES_USAGE);
+    return 2;
+  }
+  const session = await currentSession(deps.env, deps.cwd);
+  deps.stdout(JSON.stringify(replySummaries(session), null, 2));
+  return 0;
 }
 
 async function flyFile(argv: string[], deps: Deps): Promise<number> {
@@ -250,23 +270,6 @@ async function gitRemote(projectPath: string): Promise<string | null> {
     // Not a git repo, no `origin`, or git isn't installed.
     return null;
   }
-}
-
-/** The text of the first ATX heading outside a fenced code block, if any. */
-function firstHeading(markdown: string): string | undefined {
-  let fence: string | undefined;
-  for (const line of markdown.split(/\r?\n/)) {
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker !== undefined) {
-      if (fence === undefined) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
-      continue;
-    }
-    if (fence !== undefined) continue;
-    const heading = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1];
-    if (heading) return heading;
-  }
-  return undefined;
 }
 
 /**
