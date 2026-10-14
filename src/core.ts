@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { UserError } from "./errors.ts";
 import { runTool } from "./exec.ts";
 import { FlightLog, type LogFilter } from "./flight-log.ts";
+import { conversationMarkdown } from "./conversation.ts";
 import { firstHeading } from "./markdown.ts";
 import { LONG_REPLY_WORDS, findReply, mostRecentLongReply, replySummaries } from "./selection.ts";
 import { currentSession } from "./session.ts";
@@ -16,7 +17,8 @@ const FILE_USAGE = "usage: fly file <path.md> [--title <title>]";
 const LOG_USAGE = "usage: fly log [--all | --session <id>]";
 const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>] [--again]";
 const REPLIES_USAGE = "usage: fly replies";
-const USAGE = `${REPLY_USAGE}\n${REPLIES_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
+const CONVERSATION_USAGE = "usage: fly conversation [--title <title>]";
+const USAGE = `${REPLY_USAGE}\n${REPLIES_USAGE}\n${CONVERSATION_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
 
 export type DispatchKind = "Reply" | "Conversation" | "File";
 
@@ -71,6 +73,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         return await flyReply(rest, deps);
       case "replies":
         return await flyReplies(rest, deps);
+      case "conversation":
+        return await flyConversation(rest, deps);
       case "file":
         return await flyFile(rest, deps);
       case "log":
@@ -117,18 +121,44 @@ async function flyReply(argv: string[], deps: Deps): Promise<number> {
         "pass --again to send another copy; nothing was sent",
     );
   }
-  // `--title` names this Dispatch only; the Session Title fixed at the first Dispatch stays.
-  const title = values.title ?? fixedTitle ?? session.title;
-  if (title === null) {
-    throw new UserError("this Session has no Session Title yet; run again with --title <title>");
-  }
-
   return send(deps, {
     markdown: reply.text,
-    title,
+    title: dispatchTitle(values.title, fixedTitle, session.title),
     kind: "Reply",
     writtenAt: reply.timestamp,
     source: { host: session.host, sessionId: session.id, replyRef: reply.ref },
+  });
+}
+
+/**
+ * The title for a Dispatch from a Session. `--title` names this Dispatch only; the Session Title
+ * fixed at the first Dispatch stays.
+ */
+function dispatchTitle(flag: string | undefined, fixedTitle: string | null, hostTitle: string | null): string {
+  const title = flag ?? fixedTitle ?? hostTitle;
+  if (title === null) {
+    throw new UserError("this Session has no Session Title yet; run again with --title <title>");
+  }
+  return title;
+}
+
+async function flyConversation(argv: string[], deps: Deps): Promise<number> {
+  let values: { title?: string };
+  try {
+    ({ values } = parseArgs({ args: argv, options: { title: { type: "string" } } }));
+  } catch {
+    deps.stderr(CONVERSATION_USAGE);
+    return 2;
+  }
+
+  const session = await currentSession(deps.env, deps.cwd);
+  if (session.turns.length === 0) throw new UserError("this Session has no prompts or Replies yet; nothing was sent");
+  const fixedTitle = await withFlightLog(deps, async (log) => log.sessionTitle(session.host, session.id));
+  return send(deps, {
+    markdown: conversationMarkdown(session),
+    title: dispatchTitle(values.title, fixedTitle, session.title),
+    kind: "Conversation",
+    source: { host: session.host, sessionId: session.id, replyRef: null },
   });
 }
 
@@ -195,7 +225,9 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const writtenAt = content.writtenAt ?? sentAt;
   const timestamp = formatTimestamp(writtenAt);
   // The transport names documents after local files, so path separators can't appear.
-  const baseName = `${timestamp} ${title}`.replace(/[/\\]/g, "-");
+  // A Conversation Dispatch's suffix tells it apart from Reply Dispatches from the same Session.
+  const suffix = kind === "Conversation" ? " (conversation)" : "";
+  const baseName = `${timestamp} ${title}${suffix}`.replace(/[/\\]/g, "-");
 
   const dispatchId = crypto.randomUUID();
   const projectPath = await projectRoot(deps.cwd);

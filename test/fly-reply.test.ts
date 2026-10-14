@@ -148,6 +148,7 @@ test("a Reply Dispatch is recorded with its Session, host and source Reply", asy
       sentAt: sentAt.toISOString(),
       state: "landed",
       pdfPath: null,
+      supersedes: null,
     },
   ]);
   expect(await flyLog("--session", "another-session")).toEqual([]);

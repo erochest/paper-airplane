@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { RenderRequest } from "../src/core.ts";
+import type { DispatchKind, RenderRequest } from "../src/core.ts";
 import { PandocTypstRenderer } from "../src/renderer.ts";
 
 const toolsMissing = !Bun.which("pandoc") || !Bun.which("typst");
@@ -9,16 +9,16 @@ const A5 = { width: 419.53, height: 595.28 };
 
 const dispatchId = "3f2b9c1e-7a4d-4e8b-9c0f-5d6e7f8a9b0c";
 
-function request(markdown: string): RenderRequest {
+function request(markdown: string, kind: DispatchKind): RenderRequest {
   return {
     markdown,
     dispatchId,
-    header: { title: 'A "quoted" #title', timestamp: "2026-10-13 09:05", project: "paper-airplane", kind: "File" },
+    header: { title: 'A "quoted" #title', timestamp: "2026-10-13 09:05", project: "paper-airplane", kind },
   };
 }
 
-function render(markdown: string) {
-  return new PandocTypstRenderer().render(request(markdown)).then((pdf) => new TextDecoder("latin1").decode(pdf));
+function render(markdown: string, kind: DispatchKind = "File") {
+  return new PandocTypstRenderer().render(request(markdown, kind)).then((pdf) => new TextDecoder("latin1").decode(pdf));
 }
 
 test.skipIf(toolsMissing)("the real renderer produces an A5 PDF from GitHub-flavored Markdown", async () => {
@@ -81,6 +81,28 @@ test.skipIf(toolsMissing)("block quotes, links, Mermaid, long code lines and emo
 
   expect(text.startsWith("%PDF-")).toBe(true);
   // Typst-looking text in the Markdown is content, not markup, so the page stays A5.
+  for (const [, width] of text.matchAll(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/g)) {
+    expect(Number(width)).toBeCloseTo(A5.width, 0);
+  }
+});
+
+test.skipIf(toolsMissing)("a Conversation's prompts render as their own blocks, whatever characters they hold", async () => {
+  const markdown = [
+    "::: prompt",
+    "**You**",
+    "",
+    "Fix the `]` and #set page(width: 1pt) [unbalanced",
+    ":::",
+    "",
+    "# A Reply",
+    "",
+    "Some prose.",
+    "",
+  ].join("\n");
+
+  const text = await render(markdown, "Conversation");
+
+  expect(text.startsWith("%PDF-")).toBe(true);
   for (const [, width] of text.matchAll(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/g)) {
     expect(Number(width)).toBeCloseTo(A5.width, 0);
   }

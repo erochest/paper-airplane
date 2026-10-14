@@ -77,6 +77,7 @@ test("a File Dispatch is recorded in the Flight Log", async () => {
       sentAt: now.toISOString(),
       state: "landed",
       pdfPath: null,
+      supersedes: null,
     },
   ]);
 });

@@ -124,6 +124,80 @@ class Transcript {
     return this;
   }
 
+  /** A slash command as Claude Code records it, followed by the skill body it injects. */
+  command(name: string, args: string, seconds = 30) {
+    this.records.push({
+      ...this.base(seconds),
+      promptId: uuid(),
+      type: "user",
+      message: {
+        role: "user",
+        content: `<command-message>${name}</command-message>\n<command-name>/${name}</command-name>\n<command-args>${args}</command-args>`,
+      },
+      origin: { kind: "human" },
+      turnOrigin: "human",
+    });
+    return this.meta(`Base directory for this skill: /skills/${name}\n\n` + "Follow these steps. ".repeat(40));
+  }
+
+  /** A background task finishing, which Claude Code queues as a user record. */
+  taskNotification(seconds = 60) {
+    this.records.push({
+      ...this.base(seconds),
+      promptId: uuid(),
+      type: "user",
+      message: {
+        role: "user",
+        content: "<task-notification>\n<task-id>a1b2c3d4e5f6a7b8c</task-id>\n<status>completed</status>\n</task-notification>",
+      },
+      origin: { kind: "task-notification", producer: "session-task" },
+      promptSource: "system",
+      queueTranscriptOnly: true,
+    });
+    return this;
+  }
+
+  interrupted(seconds = 2) {
+    this.records.push({
+      ...this.base(seconds),
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] },
+    });
+    return this;
+  }
+
+  /**
+   * Compaction: Claude Code keeps every earlier record in the transcript, then writes a boundary
+   * and a summary that replace them in the agent's context.
+   */
+  compact(seconds = 5) {
+    const last = (this.records.findLast((r) => "uuid" in r) as { uuid: string }).uuid;
+    const boundary = { ...this.base(seconds), parentUuid: null };
+    this.records.push({
+      ...boundary,
+      logicalParentUuid: last,
+      type: "system",
+      subtype: "compact_boundary",
+      content: "Conversation compacted",
+      isMeta: false,
+      level: "info",
+      compactMetadata: { trigger: "auto", preTokens: 167000 },
+    });
+    this.records.push({
+      ...this.base(1),
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "This session is being continued from a previous conversation that ran out of context. " +
+          "The summary below covers the earlier portion of the conversation.\n\nSummary: a rollout plan was written.",
+      },
+      isVisibleInTranscriptOnly: true,
+      isCompactSummary: true,
+    });
+    return this;
+  }
+
   aiTitle(title: string) {
     this.records.push({ type: "ai-title", aiTitle: title, sessionId: this.sessionId });
     return this;
@@ -244,3 +318,52 @@ unknown.records.push({
   message: { role: "assistant", type: "message", content: [{ type: "hologram", data: "…" }] },
 });
 unknown.aiTitle("Unknown shapes").write("unknown-block");
+
+// A long Session compacted partway through. The early turns are no longer in the agent's context
+// but are still in the transcript, so a Conversation Dispatch includes them.
+const RISKS = "The main risk is a rate limit upstream that only shows at full volume.";
+const REVIEW = `## Review
+
+The plan is sound. Stage two should name who watches the three numbers each day, and the load test needs a date before stage three can start.`;
+const BACKGROUND = "The background check finished: every link in the plan resolves.";
+new Transcript("55555555-5555-4555-8555-555555555555", "2026-10-13T09:00:00Z")
+  .bookkeeping()
+  .prompt("Write me a rollout plan for the new sending path.")
+  .thinking("The user wants a staged plan with exit conditions.")
+  .text(LONG_PLAN, 40)
+  .turnEnd()
+  .aiTitle("Rollout plan for sending")
+  .prompt("What's the *main* risk? [one line]")
+  .tool("grep -n Risks docs/rollout.md", "21:## Risks")
+  .text(RISKS)
+  .turnEnd()
+  .compact()
+  .command("review", "the plan")
+  .thinking("Review the plan against the exit conditions.")
+  .text(REVIEW)
+  .turnEnd()
+  .taskNotification()
+  .text(BACKGROUND)
+  .turnEnd()
+  .prompt("Start stage one.")
+  .tool("git checkout -b stage-one", "")
+  .interrupted()
+  .prompt("Actually, wait until Monday.\nThanks.")
+  .text(SHORT_DONE)
+  .turnEnd()
+  .write("compacted");
+expected(
+  "compacted",
+  [
+    "::: prompt\n**You**\n\nWrite me a rollout plan for the new sending path.\n:::",
+    LONG_PLAN.trimEnd(),
+    "::: prompt\n**You**\n\nWhat's the *main* risk? [one line]\n:::",
+    RISKS,
+    "::: prompt\n**You**\n\n/review the plan\n:::",
+    REVIEW,
+    BACKGROUND,
+    "::: prompt\n**You**\n\nStart stage one.\n:::",
+    "::: prompt\n**You**\n\nActually, wait until Monday.\nThanks.\n:::",
+    SHORT_DONE,
+  ].join("\n\n") + "\n",
+);

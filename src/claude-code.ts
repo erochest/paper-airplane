@@ -17,6 +17,8 @@ const SKIPPED_ASSISTANT_BLOCKS = new Set([
   "web_fetch_tool_result",
 ]);
 
+const INTERRUPTION = /^\[Request interrupted by user[^\]]*\]$/;
+
 /** A transcript record or content block, before its shape is checked. */
 type Json = Record<string, unknown>;
 
@@ -64,6 +66,7 @@ export async function readClaudeCodeSession(
       throw unrecognised(`${String(record.type)} record without a uuid and timestamp`);
     }
     const content = (record.message as Json | null)?.content;
+    const originKind = (record.origin as Json | undefined)?.kind;
 
     switch (record.type) {
       case "user": {
@@ -73,7 +76,7 @@ export async function readClaudeCodeSession(
         }
         let text: string;
         if (typeof content === "string") {
-          text = content;
+          text = slashCommand(content) ?? content;
         } else if (Array.isArray(content)) {
           const types = content.map((block: Json) => block?.type);
           if (types.every((type) => type === "tool_result")) return;
@@ -83,8 +86,22 @@ export async function readClaudeCodeSession(
             .filter((block: Json) => block.type === "text")
             .map((block: Json) => String(block.text))
             .join("\n\n");
+          // Claude Code's marker for an interrupted Reply, not something the user typed.
+          if (INTERRUPTION.test(text)) {
+            reply = undefined;
+            return;
+          }
         } else {
           throw unrecognised("user message without content");
+        }
+        // Claude Code queues a finished background task as a user record. It isn't a prompt, but
+        // the agent's response to it is a Reply of its own.
+        if (originKind === "task-notification") {
+          reply = undefined;
+          return;
+        }
+        if (originKind !== undefined && originKind !== "human") {
+          throw unrecognised(`user record from origin "${String(originKind)}"`);
         }
         reply = undefined;
         turns.push({ role: "user", text, timestamp, ref });
@@ -137,4 +154,15 @@ async function transcriptPath(env: Record<string, string | undefined>, cwd: stri
     if (await Bun.file(candidate).exists()) return candidate;
   }
   throw new UserError(`can't find the transcript for Claude Code Session ${sessionId} under ${projects}`);
+}
+
+/**
+ * A slash command as the user typed it (`/review the plan`), from the tags Claude Code records it
+ * as, or undefined when `content` isn't a slash command.
+ */
+function slashCommand(content: string): string | undefined {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(content)?.[1];
+  if (name === undefined || !content.trimStart().startsWith("<command-")) return undefined;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(content)?.[1] ?? "";
+  return args.trim() === "" ? name.trim() : `${name.trim()} ${args.trim()}`;
 }

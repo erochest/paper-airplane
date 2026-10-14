@@ -49,6 +49,15 @@
 #let horizontalRule = line(start: (25%, 0%), end: (75%, 0%))
 #let divider = if "divider" in std { divider } else { horizontalRule }
 
+// A Conversation's prompts, which the prompt filter wraps in this: indented and grey, so who is
+// speaking shows at a glance.
+#let prompt(body) = block(
+  inset: (left: 10pt),
+  above: 14pt,
+  below: 14pt,
+  text(size: 9pt, fill: luma(100), body),
+)
+
 #block(below: 14pt, text(size: 8pt, fill: luma(90))[
   #text(weight: "bold", dispatch.title) \
   #dispatch.timestamp · #dispatch.project · #dispatch.kind
