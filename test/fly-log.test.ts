@@ -133,7 +133,10 @@ test("fly log --session narrows to one Session", async () => {
 test("fly log rejects unknown or conflicting options", async () => {
   expect(await flyIn(project, "log", "--bogus")).toBe(2);
   expect(await flyIn(project, "log", "--all", "--session", "x")).toBe(2);
-  expect(err).toEqual(["usage: fly log [--all | --session <id>]", "usage: fly log [--all | --session <id>]"]);
+  expect(err).toEqual([
+    "usage: fly log [--all | --session <id> | --grounded]",
+    "usage: fly log [--all | --session <id> | --grounded]",
+  ]);
 });
 
 test("several fly processes sending at once are all recorded", async () => {

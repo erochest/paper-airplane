@@ -1,4 +1,4 @@
-import { access, readFile, realpath } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -14,11 +14,12 @@ import { currentSession } from "./session.ts";
 export const HANGAR = "/Paper Airplane";
 
 const FILE_USAGE = "usage: fly file <path.md> [--title <title>]";
-const LOG_USAGE = "usage: fly log [--all | --session <id>]";
+const LOG_USAGE = "usage: fly log [--all | --session <id> | --grounded]";
 const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>] [--again]";
 const REPLIES_USAGE = "usage: fly replies";
 const CONVERSATION_USAGE = "usage: fly conversation [--title <title>]";
-const USAGE = `${REPLY_USAGE}\n${REPLIES_USAGE}\n${CONVERSATION_USAGE}\n${FILE_USAGE}\n${LOG_USAGE}`;
+const RETRY_USAGE = "usage: fly retry";
+const USAGE = [REPLY_USAGE, REPLIES_USAGE, CONVERSATION_USAGE, FILE_USAGE, RETRY_USAGE, LOG_USAGE].join("\n");
 
 export type DispatchKind = "Reply" | "Conversation" | "File";
 
@@ -77,6 +78,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         return await flyConversation(rest, deps);
       case "file":
         return await flyFile(rest, deps);
+      case "retry":
+        return await flyRetry(rest, deps);
       case "log":
         return await flyLog(rest, deps);
       default:
@@ -111,14 +114,22 @@ async function flyReply(argv: string[], deps: Deps): Promise<number> {
         : `this Session has no Long Reply (more than ${LONG_REPLY_WORDS} words) to send; nothing was sent`,
     );
   }
-  const { landed, fixedTitle } = await withFlightLog(deps, async (log) => ({
-    landed: log.landedReply(session.host, session.id, reply.ref),
+  const { landed, grounded, fixedTitle } = await withFlightLog(deps, async (log) => ({
+    landed: log.replyDispatch(session.host, session.id, reply.ref, "landed"),
+    grounded: log.replyDispatch(session.host, session.id, reply.ref, "grounded"),
     fixedTitle: log.sessionTitle(session.host, session.id),
   }));
   if (landed !== null && !values.again) {
     throw new UserError(
       `this Reply already landed as "${landed.name}", sent ${formatTimestamp(new Date(landed.sentAt))}; ` +
         "pass --again to send another copy; nothing was sent",
+    );
+  }
+  // Sending it again would leave two copies once `fly retry` sends the Grounded one.
+  if (grounded !== null && !values.again) {
+    throw new UserError(
+      `this Reply is already Grounded as "${grounded.name}"; run fly retry to send it, ` +
+        "or pass --again to send another copy; nothing was sent",
     );
   }
   return send(deps, {
@@ -218,7 +229,11 @@ interface DispatchContent {
   source: SessionSource | null;
 }
 
-/** Renders a Dispatch, delivers it to the Hangar, records it in the Flight Log and reports it. */
+/**
+ * Renders a Dispatch, delivers it to the Hangar, records it in the Flight Log and reports it. If
+ * delivery fails, the PDF is kept and the Dispatch is recorded as Grounded, with its failed attempt
+ * as its sent-at time until it lands.
+ */
 async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const { markdown, title, kind, source } = content;
   const sentAt = deps.now();
@@ -233,9 +248,19 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const projectPath = await projectRoot(deps.cwd);
   const header: PageHeader = { title, timestamp, project: basename(projectPath), kind };
   const pdf = await deps.renderer.render({ markdown, dispatchId, header });
-  await deps.transport.ensureFolder(HANGAR);
-  const name = freeName(baseName, new Set(await deps.transport.documentNames(HANGAR)));
-  await deps.transport.upload(HANGAR, name, pdf);
+
+  let name = baseName;
+  let grounded: { reason: string; pdfPath: string } | null = null;
+  try {
+    name = await deliver(deps.transport, baseName, pdf);
+  } catch (error) {
+    // Nothing the user asked to send is lost: the PDF is kept for `fly retry` or a manual upload.
+    const pdfPath = groundedPdfPath(deps.env, dispatchId);
+    await mkdir(dirname(pdfPath), { recursive: true });
+    await writeFile(pdfPath, pdf);
+    grounded = { reason: `the upload failed (${(error as Error).message})`, pdfPath };
+  }
+
   await withFlightLog(deps, async (log) =>
     log.record({
       id: dispatchId,
@@ -249,12 +274,90 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
       name,
       writtenAt: writtenAt.toISOString(),
       sentAt: sentAt.toISOString(),
-      state: "landed",
-      pdfPath: null,
+      state: grounded === null ? "landed" : "grounded",
+      pdfPath: grounded?.pdfPath ?? null,
     }),
   );
-  deps.stdout(JSON.stringify({ id: dispatchId, name, state: "landed" }));
+  if (grounded === null) return reportLanded(deps, dispatchId, name);
+  return reportGrounded(deps, dispatchId, name, grounded.pdfPath, grounded.reason);
+}
+
+/**
+ * Resends every Grounded Dispatch's kept PDF, from any project, under its original name and ID.
+ * A name taken in the Hangar since is resolved with a counter, as for a first send. Dispatches that
+ * fail again stay Grounded. Two `fly retry` processes at once could both send the same Dispatch;
+ * that is left open.
+ */
+async function flyRetry(argv: string[], deps: Deps): Promise<number> {
+  try {
+    parseArgs({ args: argv, options: {} });
+  } catch {
+    deps.stderr(RETRY_USAGE);
+    return 2;
+  }
+
+  const grounded = await withFlightLog(deps, async (log) => log.dispatches({ state: "grounded" }));
+  if (grounded.length === 0) {
+    deps.stderr("fly: no Dispatches are Grounded; nothing was sent");
+    return 0;
+  }
+  let code = 0;
+  for (const { id, name, pdfPath } of grounded) {
+    // Every Grounded Dispatch is recorded with the path its PDF was kept at.
+    const path = pdfPath ?? "";
+    let pdf: Uint8Array;
+    try {
+      pdf = await readFile(path);
+    } catch (error) {
+      deps.stderr(
+        `fly: the kept PDF for "${name}" can't be read at ${path} (${(error as Error).message}); ` +
+          "it stays Grounded",
+      );
+      code = 1;
+      continue;
+    }
+    let landedName: string;
+    try {
+      landedName = await deliver(deps.transport, name, pdf);
+    } catch (error) {
+      code = reportGrounded(deps, id, name, path, `the upload failed (${(error as Error).message})`);
+      continue;
+    }
+    const sentAt = deps.now().toISOString();
+    await withFlightLog(deps, async (log) => log.land(id, landedName, sentAt));
+    await rm(path, { force: true });
+    reportLanded(deps, id, landedName);
+  }
+  return code;
+}
+
+/**
+ * Uploads `pdf` to the Hangar under `baseName`, or under a counter-suffixed name if that is taken,
+ * and returns the name used.
+ */
+async function deliver(transport: Transport, baseName: string, pdf: Uint8Array): Promise<string> {
+  await transport.ensureFolder(HANGAR);
+  const name = freeName(baseName, new Set(await transport.documentNames(HANGAR)));
+  await transport.upload(HANGAR, name, pdf);
+  return name;
+}
+
+/** Prints the machine-readable result for a Dispatch that reached the Hangar; returns exit code 0. */
+function reportLanded(deps: Deps, id: string, name: string): number {
+  deps.stdout(JSON.stringify({ id, name, state: "landed" }));
   return 0;
+}
+
+/**
+ * Prints the machine-readable result for a Grounded Dispatch, and why it was grounded and where its
+ * PDF is kept; returns exit code 1.
+ */
+function reportGrounded(deps: Deps, id: string, name: string, pdfPath: string, reason: string): number {
+  deps.stdout(JSON.stringify({ id, name, state: "grounded", pdfPath }));
+  deps.stderr(
+    `fly: ${reason}; the Dispatch is Grounded and its PDF is kept at ${pdfPath}; run fly retry to send it again`,
+  );
+  return 1;
 }
 
 /**
@@ -271,27 +374,30 @@ function freeName(baseName: string, taken: Set<string>): string {
 }
 
 async function flyLog(argv: string[], deps: Deps): Promise<number> {
-  let values: { all?: boolean; session?: string };
+  let values: { all?: boolean; session?: string; grounded?: boolean };
   try {
     ({ values } = parseArgs({
       args: argv,
-      options: { all: { type: "boolean" }, session: { type: "string" } },
+      options: { all: { type: "boolean" }, session: { type: "string" }, grounded: { type: "boolean" } },
     }));
   } catch {
     deps.stderr(LOG_USAGE);
     return 2;
   }
-  if (values.all && values.session !== undefined) {
+  if ([values.all, values.session !== undefined, values.grounded].filter(Boolean).length > 1) {
     deps.stderr(LOG_USAGE);
     return 2;
   }
 
-  // A Session ID is unique on its own, so `--session` looks across every project.
+  // A Session ID is unique on its own, so `--session` looks across every project. `--grounded`
+  // does too, matching `fly retry`, which sends every project's Grounded Dispatches.
   const filter: LogFilter = values.session !== undefined
     ? { sessionId: values.session }
-    : values.all
-      ? {}
-      : { projectPath: await projectRoot(deps.cwd) };
+    : values.grounded
+      ? { state: "grounded" }
+      : values.all
+        ? {}
+        : { projectPath: await projectRoot(deps.cwd) };
   const dispatches = await withFlightLog(deps, async (log) => log.dispatches(filter));
   deps.stdout(JSON.stringify(dispatches, null, 2));
   return 0;
@@ -319,6 +425,11 @@ function dataDir(env: Deps["env"]): string {
     default:
       return join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "paper-airplane");
   }
+}
+
+/** Where a Grounded Dispatch's PDF is kept until it lands. */
+function groundedPdfPath(env: Deps["env"], dispatchId: string): string {
+  return join(dataDir(env), "grounded", `${dispatchId}.pdf`);
 }
 
 /** The URL of the repo's `origin` remote, if it has one. */

@@ -6,10 +6,20 @@ export interface Upload {
   content: Uint8Array;
 }
 
+/** Ways the fake device can be told to fail, each as rmapi would. */
+export type DeviceFailure = "no-login" | "network-down";
+
+const FAILURE_MESSAGES: Record<DeviceFailure, string> = {
+  "no-login": "rmapi exited with 1: failed to authenticate: no auth token, run rmapi to pair",
+  "network-down": "rmapi exited with 1: dial tcp: lookup internal.cloud.remarkable.com: no such host",
+};
+
 /** An in-memory reMarkable: records folders and every document uploaded. */
 export class FakeDevice implements Transport {
   folders = new Set<string>();
   uploads: Upload[] = [];
+  /** When set, every call fails this way until it's cleared. */
+  failure: DeviceFailure | null = null;
   /** Documents already in a folder that `fly` didn't upload in this test, e.g. from another machine. */
   private placed: { folder: string; name: string }[] = [];
 
@@ -19,15 +29,22 @@ export class FakeDevice implements Transport {
     this.placed.push({ folder, name });
   }
 
+  private check(): void {
+    if (this.failure !== null) throw new Error(FAILURE_MESSAGES[this.failure]);
+  }
+
   async ensureFolder(folder: string): Promise<void> {
+    this.check();
     this.folders.add(folder);
   }
 
   async documentNames(folder: string): Promise<string[]> {
+    this.check();
     return [...this.placed, ...this.uploads].filter((d) => d.folder === folder).map((d) => d.name);
   }
 
   async upload(folder: string, name: string, pdf: Uint8Array): Promise<void> {
+    this.check();
     if (!this.folders.has(folder)) {
       throw new Error(`no such folder on device: ${folder}`);
     }

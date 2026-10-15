@@ -36,6 +36,8 @@ export interface LogFilter {
   projectPath?: string;
   /** Only this Session's Dispatches. */
   sessionId?: string;
+  /** Only Dispatches in this state. */
+  state?: DispatchState;
 }
 
 // How long a writer waits for another `fly` process to release the database before failing.
@@ -147,6 +149,16 @@ export class FlightLog {
       .immediate();
   }
 
+  /**
+   * Marks a Grounded Dispatch landed under `name`, sent at `sentAt` (ISO 8601), and forgets its
+   * local PDF path.
+   */
+  land(id: string, name: string, sentAt: string): void {
+    this.db
+      .query("UPDATE dispatches SET state = 'landed', name = ?, sent_at = ?, pdf_path = NULL WHERE id = ?")
+      .run(name, sentAt, id);
+  }
+
   /** The Session Title fixed at the Session's first Dispatch, if it has had one. */
   sessionTitle(host: string, sessionId: string): string | null {
     return (
@@ -156,17 +168,17 @@ export class FlightLog {
     );
   }
 
-  /** The most recent landed Dispatch of the Reply `replyRef` from the Session, if there is one. */
-  landedReply(host: string, sessionId: string, replyRef: string): DispatchRecord | null {
+  /** The most recent Dispatch in `state` of the Reply `replyRef` from the Session, if there is one. */
+  replyDispatch(host: string, sessionId: string, replyRef: string, state: DispatchState): DispatchRecord | null {
     return (
       this.db
-        .query<DispatchRecord, [string, string, string]>(
+        .query<DispatchRecord, [string, string, string, string]>(
           `${SELECT_DISPATCHES}
-           WHERE host = ? AND session_id = ? AND reply_ref = ? AND kind = 'Reply' AND state = 'landed'
+           WHERE host = ? AND session_id = ? AND reply_ref = ? AND kind = 'Reply' AND state = ?
            ORDER BY sent_at DESC, seq DESC
            LIMIT 1`,
         )
-        .get(host, sessionId, replyRef) ?? null
+        .get(host, sessionId, replyRef, state) ?? null
     );
   }
 
@@ -195,6 +207,10 @@ export class FlightLog {
     if (filter.sessionId !== undefined) {
       where.push("session_id = ?");
       params.push(filter.sessionId);
+    }
+    if (filter.state !== undefined) {
+      where.push("state = ?");
+      params.push(filter.state);
     }
     return this.db
       .query<DispatchRecord, string[]>(
