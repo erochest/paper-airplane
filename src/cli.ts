@@ -2,6 +2,7 @@
 import { run } from "./core.ts";
 import { PandocTypstRenderer } from "./renderer.ts";
 import { RmapiTransport } from "./rmapi.ts";
+import { PathToolchain } from "./toolchain.ts";
 
 try {
   const code = await run(process.argv.slice(2), {
@@ -10,6 +11,7 @@ try {
     now: () => new Date(),
     transport: new RmapiTransport(),
     renderer: new PandocTypstRenderer(),
+    toolchain: new PathToolchain(),
     stdout: (line) => console.log(line),
     stderr: (line) => console.error(line),
   });

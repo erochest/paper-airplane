@@ -3,7 +3,7 @@ import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/core.ts";
-import { FakeDevice, FakeRenderer } from "./fakes.ts";
+import { FakeDevice, FakeRenderer, FakeToolchain } from "./fakes.ts";
 
 let dir: string;
 let project: string;
@@ -44,6 +44,7 @@ function flyIn(cwd: string, ...args: string[]) {
     now: () => now,
     transport: device,
     renderer,
+    toolchain: new FakeToolchain(),
     stdout: (line) => out.push(line),
     stderr: (line) => err.push(line),
   });
@@ -95,6 +96,35 @@ test("a failed upload keeps the PDF, records the Dispatch as Grounded, and print
 
   const [record] = await flyLog();
   expect(record).toMatchObject({ id, name: "2026-10-13 09:05 Rollout plan", state: "grounded", pdfPath: result.pdfPath });
+});
+
+test("an upload that fails for want of a login tells the user to run fly doctor", async () => {
+  device.failure = "no-login";
+
+  expect(await sendFile("Rollout plan")).toBe(1);
+
+  const [{ pdfPath }] = printed();
+  expect(err).toEqual([
+    "fly: the upload failed because rmapi is not logged in to the reMarkable cloud, or its login has expired; " +
+      `the Dispatch is Grounded and its PDF is kept at ${pdfPath}; run fly doctor to fix the login, ` +
+      "then fly retry to send it again",
+  ]);
+});
+
+test("a retry that fails for want of a login tells the user to run fly doctor", async () => {
+  device.failure = "network-down";
+  await sendFile("Rollout plan");
+  const [{ pdfPath }] = printed();
+
+  device.failure = "no-login";
+  err = [];
+  expect(await fly("retry")).toBe(1);
+
+  expect(err).toEqual([
+    "fly: the upload failed because rmapi is not logged in to the reMarkable cloud, or its login has expired; " +
+      `the Dispatch is Grounded and its PDF is kept at ${pdfPath}; run fly doctor to fix the login, ` +
+      "then fly retry to send it again",
+  ]);
 });
 
 test("fly retry sends a Grounded Dispatch under its original name and ID, and marks it landed", async () => {

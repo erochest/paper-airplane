@@ -1,4 +1,5 @@
-import type { Renderer, RenderRequest, Transport } from "../src/core.ts";
+import type { Renderer, RenderRequest, Tool, Toolchain, Transport } from "../src/core.ts";
+import { NotLoggedInError } from "../src/errors.ts";
 
 export interface Upload {
   folder: string;
@@ -10,7 +11,7 @@ export interface Upload {
 export type DeviceFailure = "no-login" | "network-down";
 
 const FAILURE_MESSAGES: Record<DeviceFailure, string> = {
-  "no-login": "rmapi exited with 1: failed to authenticate: no auth token, run rmapi to pair",
+  "no-login": "rmapi exited with 1: ERROR: 2026/10/13 09:05:00 auth.go:30: missing token, not asking, aborting",
   "network-down": "rmapi exited with 1: dial tcp: lookup internal.cloud.remarkable.com: no such host",
 };
 
@@ -30,7 +31,12 @@ export class FakeDevice implements Transport {
   }
 
   private check(): void {
+    if (this.failure === "no-login") throw new NotLoggedInError(FAILURE_MESSAGES[this.failure]);
     if (this.failure !== null) throw new Error(FAILURE_MESSAGES[this.failure]);
+  }
+
+  async checkLogin(): Promise<void> {
+    this.check();
   }
 
   async ensureFolder(folder: string): Promise<void> {
@@ -63,5 +69,19 @@ export class FakeRenderer implements Renderer {
   async render(request: RenderRequest): Promise<Uint8Array> {
     this.requests.push(request);
     return new TextEncoder().encode(`%PDF-fake\n${request.markdown}`);
+  }
+}
+
+/**
+ * Reports tool versions as if they were installed, unless a test removes them (null) or makes
+ * asking for the version fail (an Error).
+ */
+export class FakeToolchain implements Toolchain {
+  versions: Record<Tool, string | null | Error> = { pandoc: "3.12.1", typst: "0.15.1", rmapi: "v0.0.35" };
+
+  async version(tool: Tool): Promise<string | null> {
+    const version = this.versions[tool];
+    if (version instanceof Error) throw version;
+    return version;
   }
 }

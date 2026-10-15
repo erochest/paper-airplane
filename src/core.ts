@@ -2,7 +2,7 @@ import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promis
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { UserError } from "./errors.ts";
+import { NotLoggedInError, UserError } from "./errors.ts";
 import { runTool } from "./exec.ts";
 import { FlightLog, type LogFilter } from "./flight-log.ts";
 import { conversationMarkdown } from "./conversation.ts";
@@ -19,7 +19,10 @@ const REPLY_USAGE = "usage: fly reply [--reply <ref>] [--title <title>] [--again
 const REPLIES_USAGE = "usage: fly replies";
 const CONVERSATION_USAGE = "usage: fly conversation [--title <title>]";
 const RETRY_USAGE = "usage: fly retry";
-const USAGE = [REPLY_USAGE, REPLIES_USAGE, CONVERSATION_USAGE, FILE_USAGE, RETRY_USAGE, LOG_USAGE].join("\n");
+const DOCTOR_USAGE = "usage: fly doctor";
+const USAGE = [REPLY_USAGE, REPLIES_USAGE, CONVERSATION_USAGE, FILE_USAGE, RETRY_USAGE, LOG_USAGE, DOCTOR_USAGE].join(
+  "\n",
+);
 
 export type DispatchKind = "Reply" | "Conversation" | "File";
 
@@ -53,6 +56,17 @@ export interface Transport {
   documentNames(folder: string): Promise<string[]>;
   /** Uploads a new document; `name` must not already be taken in `folder`. */
   upload(folder: string, name: string, pdf: Uint8Array): Promise<void>;
+  /** Succeeds when the transport is logged in; throws `NotLoggedInError` when it isn't. */
+  checkLogin(): Promise<void>;
+}
+
+/** The external tools `fly` depends on. */
+export type Tool = "pandoc" | "typst" | "rmapi";
+
+/** Finds out which external tools are installed. */
+export interface Toolchain {
+  /** The installed version of `tool`, or null when it isn't installed. */
+  version(tool: Tool): Promise<string | null>;
 }
 
 export interface Deps {
@@ -61,6 +75,7 @@ export interface Deps {
   now: () => Date;
   transport: Transport;
   renderer: Renderer;
+  toolchain: Toolchain;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
 }
@@ -82,6 +97,8 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         return await flyRetry(rest, deps);
       case "log":
         return await flyLog(rest, deps);
+      case "doctor":
+        return await flyDoctor(rest, deps);
       default:
         deps.stderr(USAGE);
         return 2;
@@ -250,7 +267,7 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const pdf = await deps.renderer.render({ markdown, dispatchId, header });
 
   let name = baseName;
-  let grounded: { reason: string; pdfPath: string } | null = null;
+  let grounded: { error: unknown; pdfPath: string } | null = null;
   try {
     name = await deliver(deps.transport, baseName, pdf);
   } catch (error) {
@@ -258,7 +275,7 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
     const pdfPath = groundedPdfPath(deps.env, dispatchId);
     await mkdir(dirname(pdfPath), { recursive: true });
     await writeFile(pdfPath, pdf);
-    grounded = { reason: `the upload failed (${(error as Error).message})`, pdfPath };
+    grounded = { error, pdfPath };
   }
 
   await withFlightLog(deps, async (log) =>
@@ -279,7 +296,7 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
     }),
   );
   if (grounded === null) return reportLanded(deps, dispatchId, name);
-  return reportGrounded(deps, dispatchId, name, grounded.pdfPath, grounded.reason);
+  return reportGrounded(deps, dispatchId, name, grounded.pdfPath, grounded.error);
 }
 
 /**
@@ -320,7 +337,7 @@ async function flyRetry(argv: string[], deps: Deps): Promise<number> {
     try {
       landedName = await deliver(deps.transport, name, pdf);
     } catch (error) {
-      code = reportGrounded(deps, id, name, path, `the upload failed (${(error as Error).message})`);
+      code = reportGrounded(deps, id, name, path, error);
       continue;
     }
     const sentAt = deps.now().toISOString();
@@ -349,14 +366,19 @@ function reportLanded(deps: Deps, id: string, name: string): number {
 }
 
 /**
- * Prints the machine-readable result for a Grounded Dispatch, and why it was grounded and where its
- * PDF is kept; returns exit code 1.
+ * Prints the machine-readable result for a Dispatch Grounded by the upload `error`, and why it was
+ * grounded and where its PDF is kept; returns exit code 1. A missing login is for the user to fix,
+ * so they are pointed to `fly doctor` first.
  */
-function reportGrounded(deps: Deps, id: string, name: string, pdfPath: string, reason: string): number {
+function reportGrounded(deps: Deps, id: string, name: string, pdfPath: string, error: unknown): number {
   deps.stdout(JSON.stringify({ id, name, state: "grounded", pdfPath }));
-  deps.stderr(
-    `fly: ${reason}; the Dispatch is Grounded and its PDF is kept at ${pdfPath}; run fly retry to send it again`,
-  );
+  const [reason, next] = error instanceof NotLoggedInError
+    ? [
+        `the upload failed because ${NOT_LOGGED_IN}`,
+        "run fly doctor to fix the login, then fly retry to send it again",
+      ]
+    : [`the upload failed (${(error as Error).message})`, "run fly retry to send it again"];
+  deps.stderr(`fly: ${reason}; the Dispatch is Grounded and its PDF is kept at ${pdfPath}; ${next}`);
   return 1;
 }
 
@@ -401,6 +423,93 @@ async function flyLog(argv: string[], deps: Deps): Promise<number> {
   const dispatches = await withFlightLog(deps, async (log) => log.dispatches(filter));
   deps.stdout(JSON.stringify(dispatches, null, 2));
   return 0;
+}
+
+/** One thing `fly doctor` checked: fine, or a problem with an exact fix. */
+type Check =
+  | { name: string; ok: true; version?: string }
+  | { name: string; ok: false; problem: string; fix: string };
+
+const TOOLS: readonly Tool[] = ["pandoc", "typst", "rmapi"];
+
+/** The fix for each tool that isn't installed, or doesn't run. */
+const INSTALL_FIX: Record<Tool, string> = {
+  pandoc: "brew install pandoc",
+  typst: "brew install typst",
+  rmapi: "go install github.com/ddvk/rmapi@v0.0.35",
+};
+
+const LOGIN_CHECK = "rmapi login";
+const NOT_LOGGED_IN = "rmapi is not logged in to the reMarkable cloud, or its login has expired";
+
+/**
+ * Checks every external dependency and prints the result as JSON, with an exact fix for each
+ * problem; exits 1 when anything is wrong.
+ */
+async function flyDoctor(argv: string[], deps: Deps): Promise<number> {
+  try {
+    parseArgs({ args: argv, options: {} });
+  } catch {
+    deps.stderr(DOCTOR_USAGE);
+    return 2;
+  }
+
+  const checks: Check[] = [];
+  for (const tool of TOOLS) checks.push(await checkTool(deps.toolchain, tool));
+  // The transport is rmapi, so its login can only be checked once rmapi runs.
+  const rmapiRuns = checks[TOOLS.indexOf("rmapi")]?.ok;
+  checks.push(
+    rmapiRuns
+      ? await checkLogin(deps.transport)
+      : {
+          name: LOGIN_CHECK,
+          ok: false,
+          problem: "the login can't be checked until rmapi is installed",
+          fix: INSTALL_FIX.rmapi,
+        },
+  );
+
+  const ok = checks.every((check) => check.ok);
+  deps.stdout(JSON.stringify({ ok, checks }, null, 2));
+  for (const check of checks) {
+    if (!check.ok) deps.stderr(`fly: ${check.problem}; to fix it: ${check.fix}`);
+  }
+  return ok ? 0 : 1;
+}
+
+/** Whether `tool` is installed and runs, and its version. */
+async function checkTool(toolchain: Toolchain, tool: Tool): Promise<Check> {
+  const fix = INSTALL_FIX[tool];
+  try {
+    const version = await toolchain.version(tool);
+    if (version === null) return { name: tool, ok: false, problem: `${tool} is not installed`, fix };
+    return { name: tool, ok: true, version };
+  } catch (error) {
+    return { name: tool, ok: false, problem: `${tool} is installed but doesn't run (${(error as Error).message})`, fix };
+  }
+}
+
+/** Whether the transport is logged in, without printing anything the login holds. */
+async function checkLogin(transport: Transport): Promise<Check> {
+  try {
+    await transport.checkLogin();
+    return { name: LOGIN_CHECK, ok: true };
+  } catch (error) {
+    if (error instanceof NotLoggedInError) {
+      return {
+        name: LOGIN_CHECK,
+        ok: false,
+        problem: NOT_LOGGED_IN,
+        fix: "run `! rmapi` and enter the code from my.remarkable.com",
+      };
+    }
+    return {
+      name: LOGIN_CHECK,
+      ok: false,
+      problem: `the login couldn't be checked (${(error as Error).message})`,
+      fix: "check the network connection, then run fly doctor again",
+    };
+  }
 }
 
 /** Opens the Flight Log for the length of `fn`. */

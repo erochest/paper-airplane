@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/core.ts";
-import { FakeDevice, FakeRenderer } from "./fakes.ts";
+import { FakeDevice, FakeRenderer, FakeToolchain } from "./fakes.ts";
 
 let dir: string;
 let project: string;
@@ -37,6 +37,7 @@ function flyIn(cwd: string, ...args: string[]) {
     now: () => now,
     transport: device,
     renderer,
+    toolchain: new FakeToolchain(),
     stdout: (line) => out.push(line),
     stderr: (line) => err.push(line),
   });
