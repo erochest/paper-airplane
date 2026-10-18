@@ -83,17 +83,17 @@ test("fly reply sends the most recent Long Reply, skipping trailing short Replie
   expect(err).toEqual([]);
   expect(code).toBe(0);
   expect(device.uploads.map((u) => [u.folder, u.name])).toEqual([
-    ["/Paper Airplane", "2026-10-13 13:31 Rollout plan for sending"],
+    ["/Paper Airplane", "2026-10-13 13-31 Rollout plan for sending"],
   ]);
   expect(renderer.requests.map((r) => r.markdown)).toEqual([await expectedReply("trailing-short")]);
   expect(renderer.requests[0]?.header).toEqual({
     title: "Rollout plan for sending",
-    timestamp: "2026-10-13 13:31",
+    timestamp: "2026-10-13 13-31",
     project: "paper-airplane",
     kind: "Reply",
   });
   expect(out.map((line) => JSON.parse(line))).toEqual([
-    { id: renderer.requests[0]?.dispatchId, name: "2026-10-13 13:31 Rollout plan for sending", state: "landed" },
+    { id: renderer.requests[0]?.dispatchId, name: "2026-10-13 13-31 Rollout plan for sending", state: "landed" },
   ]);
 });
 
@@ -107,8 +107,8 @@ test("a Reply's text blocks are joined across tool calls, leaving out thinking, 
   for (const leftOut of ["Let me look at the Flight Log helper", "grep -n", "12 pass", "Base directory", "system-reminder"]) {
     expect(markdown).not.toContain(leftOut);
   }
-  // Named for the Reply's last text block, at 15:01:22.
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15:01 Ticket 04"]);
+  // Named for the Reply's last text block, at 15-01:22.
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15-01 Ticket 04"]);
 });
 
 test("without --title, a Session with no Session Title is refused so the agent can propose one", async () => {
@@ -144,7 +144,7 @@ test("a Reply Dispatch is recorded with its Session, host and source Reply", asy
       projectPath: project,
       gitRemote: null,
       sessionTitle: "Rollout plan for sending",
-      name: "2026-10-13 13:31 Rollout plan for sending",
+      name: "2026-10-13 13-31 Rollout plan for sending",
       writtenAt: "2026-10-13T13:31:15.000Z",
       sentAt: sentAt.toISOString(),
       state: "landed",
@@ -163,7 +163,7 @@ test("the Session Title is fixed at the Session's first Dispatch and reused afte
   expect(await fly("reply", "--again")).toBe(0);
 
   expect(err).toEqual([]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15:01 Ticket 04", "2026-10-13 15:01 Ticket 04 (2)"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15-01 Ticket 04", "2026-10-13 15-01 Ticket 04 (2)"]);
 });
 
 test("a Session Title fixed in the Flight Log is preferred over Claude Code's generated title", async () => {
@@ -173,8 +173,8 @@ test("a Session Title fixed in the Flight Log is preferred over Claude Code's ge
   expect(await fly("reply", "--again")).toBe(0);
 
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-13 13:31 Sending rollout",
-    "2026-10-13 13:31 Sending rollout (2)",
+    "2026-10-13 13-31 Sending rollout",
+    "2026-10-13 13-31 Sending rollout (2)",
   ]);
 });
 
@@ -224,7 +224,7 @@ test("the transcript is found under another project's directory when fly runs el
 
   expect(err).toEqual([]);
   expect(code).toBe(0);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13:31 Rollout plan for sending"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13-31 Rollout plan for sending"]);
 });
 
 test("a last transcript line that Claude Code is still writing is ignored", async () => {
@@ -243,9 +243,9 @@ test("--title on a later Dispatch names only that Dispatch; the fixed Session Ti
   expect(await fly("reply", "--again")).toBe(0);
 
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-13 13:31 Rollout plan for sending",
-    "2026-10-13 13:31 One-off name",
-    "2026-10-13 13:31 Rollout plan for sending (2)",
+    "2026-10-13 13-31 Rollout plan for sending",
+    "2026-10-13 13-31 One-off name",
+    "2026-10-13 13-31 Rollout plan for sending (2)",
   ]);
 });
 
@@ -282,7 +282,7 @@ test("fly reply --reply sends the named Reply, even one that is short and not th
 
   expect(err).toEqual([]);
   expect(renderer.requests.map((r) => r.markdown)).toEqual(["Done."]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13:32 Rollout plan for sending"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13-32 Rollout plan for sending"]);
   const [dispatch] = await flyLog("--session", sessionId);
   expect(dispatch.replyRef).toBe("00000000-0000-4000-8000-000000000013");
 });
@@ -347,7 +347,7 @@ test("a Reply that already landed is refused, naming the earlier Dispatch and wh
   expect(await fly("reply")).toBe(1);
 
   expect(err).toEqual([
-    'fly: this Reply already landed as "2026-10-13 13:31 Rollout plan for sending", sent 2026-10-14 08:00; ' +
+    'fly: this Reply already landed as "2026-10-13 13-31 Rollout plan for sending", sent 2026-10-14 08-00; ' +
       "pass --again to send another copy; nothing was sent",
   ]);
   expect(device.uploads).toHaveLength(1);

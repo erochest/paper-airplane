@@ -138,7 +138,7 @@ async function flyReply(argv: string[], deps: Deps): Promise<number> {
   }));
   if (landed !== null && !values.again) {
     throw new UserError(
-      `this Reply already landed as "${landed.name}", sent ${formatTimestamp(new Date(landed.sentAt))}; ` +
+      `this Reply already landed as "${landed.name}", sent ${formatTimestamp(new Date(landed.sentAt)).replace(/:/g, "-")}; ` +
         "pass --again to send another copy; nothing was sent",
     );
   }
@@ -255,11 +255,13 @@ async function send(deps: Deps, content: DispatchContent): Promise<number> {
   const { markdown, title, kind, source } = content;
   const sentAt = deps.now();
   const writtenAt = content.writtenAt ?? sentAt;
-  const timestamp = formatTimestamp(writtenAt);
+  let timestamp = formatTimestamp(writtenAt);
+  // Colons in filenames aren't valid on Windows, so replace them with hyphens.
+  timestamp = timestamp.replace(/:/g, "-");
   // The transport names documents after local files, so path separators can't appear.
   // A Conversation Dispatch's suffix tells it apart from Reply Dispatches from the same Session.
   const suffix = kind === "Conversation" ? " (conversation)" : "";
-  const baseName = `${timestamp} ${title}${suffix}`.replace(/[/\\]/g, "-");
+  const baseName = `${timestamp} ${title}${suffix}`.replace(/[\/\\]/g, "-");
 
   const dispatchId = crypto.randomUUID();
   const projectPath = await projectRoot(deps.cwd);

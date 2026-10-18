@@ -92,7 +92,7 @@ test("fly reply sends the current branch's most recent Long Reply, ignoring aban
   expect(code).toBe(0);
   expect(renderer.requests.map((r) => r.markdown)).toEqual([await expected("branched-reply")]);
   expect(device.uploads.map((u) => [u.folder, u.name])).toEqual([
-    ["/Paper Airplane", "2026-10-13 13:32 Rollout plan for sending"],
+    ["/Paper Airplane", "2026-10-13 13-32 Rollout plan for sending"],
   ]);
   const [dispatch] = await flyLog("--session", sessionId);
   expect([dispatch.host, dispatch.sessionId, dispatch.replyRef]).toEqual(["pi", sessionId, "a000000a"]);
@@ -131,7 +131,7 @@ test("fly reply --reply sends a named short Reply from the current branch", asyn
   expect(await fly("reply", "--reply", "a0000016")).toBe(0);
 
   expect(renderer.requests.map((r) => r.markdown)).toEqual(["Done."]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13:34 Rollout plan for sending"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 13-34 Rollout plan for sending"]);
 });
 
 test("fly conversation sends only the current branch, with prompts set apart from Replies", async () => {
@@ -145,7 +145,7 @@ test("fly conversation sends only the current branch, with prompts set apart fro
   for (const leftOut of ["all at once", "Appendix: who does what", "opened a pull request", "Read the design first", "The new path uploads"]) {
     expect(markdown).not.toContain(leftOut);
   }
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08:00 Rollout plan for sending (conversation)"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08-00 Rollout plan for sending (conversation)"]);
   const [dispatch] = await flyLog("--session", sessionId);
   expect([dispatch.kind, dispatch.host, dispatch.replyRef]).toEqual(["Conversation", "pi", null]);
 });
@@ -189,7 +189,7 @@ test("without --title, a Pi Session that Pi hasn't named has no Session Title, s
   expect(await fly("reply", "--reply", "a0000029")).toBe(0);
   expect(err).toEqual([]);
   // The title given at the first Dispatch is fixed for the Session.
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15:00 Plan review", "2026-10-13 15:02 Plan review"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 15-00 Plan review", "2026-10-13 15-02 Plan review"]);
 });
 
 test("the Session Title comes from the latest name Pi gave the Session, trimmed", async () => {
@@ -197,7 +197,7 @@ test("the Session Title comes from the latest name Pi gave the Session, trimmed"
   await appendEntry(file, { type: "session_info", id: "renamed1", name: "  Staged rollout  " });
 
   expect(await fly("conversation")).toBe(0);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08:00 Staged rollout (conversation)"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08-00 Staged rollout (conversation)"]);
 });
 
 test("a name that Pi has cleared leaves the Session without a Session Title", async () => {
@@ -214,7 +214,7 @@ test("a Reply that already landed is refused, and --again sends another copy", a
 
   expect(await fly("reply")).toBe(1);
   expect(err).toEqual([
-    'fly: this Reply already landed as "2026-10-13 13:32 Rollout plan for sending", sent 2026-10-14 08:00; ' +
+    'fly: this Reply already landed as "2026-10-13 13-32 Rollout plan for sending", sent 2026-10-14 08-00; ' +
       "pass --again to send another copy; nothing was sent",
   ]);
 
@@ -222,8 +222,8 @@ test("a Reply that already landed is refused, and --again sends another copy", a
   expect(await fly("reply", "--again")).toBe(0);
   expect(err).toEqual([]);
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-13 13:32 Rollout plan for sending",
-    "2026-10-13 13:32 Rollout plan for sending (2)",
+    "2026-10-13 13-32 Rollout plan for sending",
+    "2026-10-13 13-32 Rollout plan for sending (2)",
   ]);
 });
 

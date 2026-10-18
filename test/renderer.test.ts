@@ -13,7 +13,7 @@ function request(markdown: string, kind: DispatchKind): RenderRequest {
   return {
     markdown,
     dispatchId,
-    header: { title: 'A "quoted" #title', timestamp: "2026-10-13 09:05", project: "paper-airplane", kind },
+    header: { title: 'A "quoted" #title', timestamp: "2026-10-13 09-05", project: "paper-airplane", kind },
   };
 }
 

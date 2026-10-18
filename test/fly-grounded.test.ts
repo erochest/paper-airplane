@@ -83,7 +83,7 @@ test("a failed upload keeps the PDF, records the Dispatch as Grounded, and print
   const [result] = printed();
   expect(result).toEqual({
     id,
-    name: "2026-10-13 09:05 Rollout plan",
+    name: "2026-10-13 09-05 Rollout plan",
     state: "grounded",
     pdfPath: expect.stringMatching(/\.pdf$/),
   });
@@ -95,7 +95,7 @@ test("a failed upload keeps the PDF, records the Dispatch as Grounded, and print
   ]);
 
   const [record] = await flyLog();
-  expect(record).toMatchObject({ id, name: "2026-10-13 09:05 Rollout plan", state: "grounded", pdfPath: result.pdfPath });
+  expect(record).toMatchObject({ id, name: "2026-10-13 09-05 Rollout plan", state: "grounded", pdfPath: result.pdfPath });
 });
 
 test("an upload that fails for want of a login tells the user to run fly doctor", async () => {
@@ -141,9 +141,9 @@ test("fly retry sends a Grounded Dispatch under its original name and ID, and ma
 
   expect(err).toEqual([]);
   expect(code).toBe(0);
-  expect(printed()).toEqual([{ id, name: "2026-10-13 09:05 Rollout plan", state: "landed" }]);
+  expect(printed()).toEqual([{ id, name: "2026-10-13 09-05 Rollout plan", state: "landed" }]);
   expect(device.uploads.map((u) => [u.folder, u.name, new TextDecoder().decode(u.content)])).toEqual([
-    ["/Paper Airplane", "2026-10-13 09:05 Rollout plan", "%PDF-fake\n# Rollout plan\n"],
+    ["/Paper Airplane", "2026-10-13 09-05 Rollout plan", "%PDF-fake\n# Rollout plan\n"],
   ]);
   // Retrying resends the kept PDF; nothing is typeset again.
   expect(renderer.requests).toHaveLength(1);
@@ -166,8 +166,8 @@ test("Dispatches that fail again stay Grounded, and a later retry sends them all
   expect(await fly("retry")).toBe(1);
   expect(device.uploads).toEqual([]);
   expect(printed()).toEqual([
-    { id: ids[0], name: "2026-10-13 09:05 First", state: "grounded", pdfPath: pdfPaths[0] },
-    { id: ids[1], name: "2026-10-13 09:10 Second", state: "grounded", pdfPath: pdfPaths[1] },
+    { id: ids[0], name: "2026-10-13 09-05 First", state: "grounded", pdfPath: pdfPaths[0] },
+    { id: ids[1], name: "2026-10-13 09-10 Second", state: "grounded", pdfPath: pdfPaths[1] },
   ]);
   expect(err).toHaveLength(2);
   expect((await flyLog()).map((r: { state: string }) => r.state)).toEqual(["grounded", "grounded"]);
@@ -178,7 +178,7 @@ test("Dispatches that fail again stay Grounded, and a later retry sends them all
   err = [];
   expect(await fly("retry")).toBe(0);
   expect(err).toEqual([]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 First", "2026-10-13 09:10 Second"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 First", "2026-10-13 09-10 Second"]);
   expect((await flyLog()).map((r: { state: string }) => r.state)).toEqual(["landed", "landed"]);
 });
 
@@ -202,21 +202,21 @@ test("fly retry sends Grounded Dispatches from every project", async () => {
   device.failure = null;
   expect(await fly("retry")).toBe(0);
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Elsewhere"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 Elsewhere"]);
 });
 
 test("a retry whose name was taken in the meantime gets a counter rather than replacing it", async () => {
   device.failure = "network-down";
   await sendFile("Rollout plan");
   device.failure = null;
-  device.place("/Paper Airplane", "2026-10-13 09:05 Rollout plan");
+  device.place("/Paper Airplane", "2026-10-13 09-05 Rollout plan");
   out = [];
 
   expect(await fly("retry")).toBe(0);
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Rollout plan (2)"]);
-  expect(printed()[0].name).toBe("2026-10-13 09:05 Rollout plan (2)");
-  expect((await flyLog())[0].name).toBe("2026-10-13 09:05 Rollout plan (2)");
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 Rollout plan (2)"]);
+  expect(printed()[0].name).toBe("2026-10-13 09-05 Rollout plan (2)");
+  expect((await flyLog())[0].name).toBe("2026-10-13 09-05 Rollout plan (2)");
 });
 
 test("fly log --grounded lists only Grounded Dispatches, from every project", async () => {
@@ -230,7 +230,7 @@ test("fly log --grounded lists only Grounded Dispatches, from every project", as
   await sendFile("Stuck elsewhere", other);
 
   const names = (records: { name: string }[]) => records.map((r) => r.name);
-  expect(names(await flyLog("--grounded"))).toEqual(["2026-10-13 09:10 Stuck here", "2026-10-13 09:15 Stuck elsewhere"]);
+  expect(names(await flyLog("--grounded"))).toEqual(["2026-10-13 09-10 Stuck here", "2026-10-13 09-15 Stuck elsewhere"]);
 
   device.failure = null;
   await fly("retry");
@@ -304,7 +304,7 @@ test("a kept PDF that has gone missing is reported as such, and the Dispatch sta
 
   expect(device.uploads).toEqual([]);
   expect(err).toEqual([
-    expect.stringMatching(new RegExp(`^fly: the kept PDF for "2026-10-13 09:05 Rollout plan" can't be read at ${pdfPath}`)),
+    expect.stringMatching(/^fly: the kept PDF for "2026-10-13 09-05 Rollout plan" can't be read at .+; it stays Grounded$/),
   ]);
-  expect((await flyLog("--grounded")).map((r: { name: string }) => r.name)).toEqual(["2026-10-13 09:05 Rollout plan"]);
+  expect((await flyLog("--grounded")).map((r: { name: string }) => r.name)).toEqual(["2026-10-13 09-05 Rollout plan"]);
 });

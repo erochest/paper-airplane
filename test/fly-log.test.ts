@@ -73,7 +73,7 @@ test("a File Dispatch is recorded in the Flight Log", async () => {
       projectPath: project,
       gitRemote: null,
       sessionTitle: null,
-      name: "2026-10-13 09:05 Rollout plan",
+      name: "2026-10-13 09-05 Rollout plan",
       writtenAt: now.toISOString(),
       sentAt: now.toISOString(),
       state: "landed",
@@ -110,12 +110,12 @@ test("fly log lists only the current project's Dispatches, oldest first; --all l
   await sendFile(join(project, "src"), "c.md", "Second");
 
   const names = (records: { name: string }[]) => records.map((r) => r.name);
-  expect(names(await flyLog(join(project, "src")))).toEqual(["2026-10-13 09:05 First", "2026-10-13 09:15 Second"]);
-  expect(names(await flyLog(other))).toEqual(["2026-10-13 09:10 Elsewhere"]);
+  expect(names(await flyLog(join(project, "src")))).toEqual(["2026-10-13 09-05 First", "2026-10-13 09-15 Second"]);
+  expect(names(await flyLog(other))).toEqual(["2026-10-13 09-10 Elsewhere"]);
   expect(names(await flyLog(other, "--all"))).toEqual([
-    "2026-10-13 09:05 First",
-    "2026-10-13 09:10 Elsewhere",
-    "2026-10-13 09:15 Second",
+    "2026-10-13 09-05 First",
+    "2026-10-13 09-10 Elsewhere",
+    "2026-10-13 09-15 Second",
   ]);
 });
 
@@ -166,5 +166,5 @@ test("a project reached through a symlink is the same project", async () => {
 
   await sendFile(link, "a.md", "Via link");
 
-  expect((await flyLog(project)).map((r: { name: string }) => r.name)).toEqual(["2026-10-13 09:05 Via link"]);
+  expect((await flyLog(project)).map((r: { name: string }) => r.name)).toEqual(["2026-10-13 09-05 Via link"]);
 });

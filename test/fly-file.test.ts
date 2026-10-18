@@ -57,7 +57,7 @@ test("fly file uploads the rendered Markdown to the Hangar under a timestamped n
   expect(device.uploads).toHaveLength(1);
   const [upload] = device.uploads;
   expect(upload?.folder).toBe("/Paper Airplane");
-  expect(upload?.name).toBe("2026-10-13 09:05 Design notes");
+  expect(upload?.name).toBe("2026-10-13 09-05 Design notes");
   expect(new TextDecoder().decode(upload?.content)).toBe("%PDF-fake\nSome *design* notes.\n");
 });
 
@@ -67,7 +67,7 @@ test("fly file prints the Dispatch's ID, name and state as JSON", async () => {
   await fly("file", path, "--title", "Design notes");
 
   expect(out.map((line) => JSON.parse(line))).toEqual([
-    { id: renderer.requests[0]?.dispatchId, name: "2026-10-13 09:05 Design notes", state: "landed" },
+    { id: renderer.requests[0]?.dispatchId, name: "2026-10-13 09-05 Design notes", state: "landed" },
   ]);
 });
 
@@ -91,7 +91,7 @@ test("without --title, the first heading names the Dispatch", async () => {
 
   await fly("file", path);
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Rollout plan"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 Rollout plan"]);
 });
 
 test("without --title or a heading, the file name names the Dispatch", async () => {
@@ -99,7 +99,7 @@ test("without --title or a heading, the file name names the Dispatch", async () 
 
   await fly("file", path);
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 meeting notes.v2"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 meeting notes.v2"]);
 });
 
 test("the page-1 header shows the title, send time, project and kind", async () => {
@@ -111,7 +111,7 @@ test("the page-1 header shows the title, send time, project and kind", async () 
   await flyIn(join(repo, "docs", "plans"), "file", "plan.md");
 
   expect(renderer.requests.map((r) => r.header)).toEqual([
-    { title: "Rollout plan", timestamp: "2026-10-13 09:05", project: "paper-airplane", kind: "File" },
+    { title: "Rollout plan", timestamp: "2026-10-13 09-05", project: "paper-airplane", kind: "File" },
   ]);
 });
 
@@ -130,7 +130,7 @@ test("a relative path is read from the working directory", async () => {
 
   await fly("file", "notes.md");
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Relative"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 Relative"]);
 });
 
 test("the Hangar is created on a device that doesn't have it", async () => {
@@ -148,7 +148,17 @@ test("a slash in the title doesn't become a folder on the device", async () => {
   await fly("file", path, "--title", "A/B testing");
 
   expect(device.uploads.map((u) => [u.folder, u.name])).toEqual([
-    ["/Paper Airplane", "2026-10-13 09:05 A-B testing"],
+    ["/Paper Airplane", "2026-10-13 09-05 A-B testing"],
+  ]);
+});
+
+test("colons in the timestamp don't appear in the filename", async () => {
+  const path = await markdownFile("notes.md", "Notes.\n");
+
+  await fly("file", path, "--title", "Test");
+
+  expect(device.uploads.map((u) => u.name)).toEqual([
+    "2026-10-13 09-05 Test",
   ]);
 });
 
@@ -168,21 +178,21 @@ test("a name already taken in the Hangar gets a counter, so no Dispatch overwrit
 
   expect(err).toEqual([]);
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-13 09:05 Rollout plan",
-    "2026-10-13 09:05 Rollout plan (2)",
-    "2026-10-13 09:05 Rollout plan (3)",
+    "2026-10-13 09-05 Rollout plan",
+    "2026-10-13 09-05 Rollout plan (2)",
+    "2026-10-13 09-05 Rollout plan (3)",
   ]);
   expect(out.map((line) => JSON.parse(line).name)).toEqual(device.uploads.map((u) => u.name));
 });
 
 test("the counter accounts for documents in the Hangar that this machine didn't send", async () => {
-  device.place("/Paper Airplane", "2026-10-13 09:05 Rollout plan");
-  device.place("/Paper Airplane", "2026-10-13 09:05 Rollout plan (2)");
+  device.place("/Paper Airplane", "2026-10-13 09-05 Rollout plan");
+  device.place("/Paper Airplane", "2026-10-13 09-05 Rollout plan (2)");
   // Same name, other folder: not a collision.
-  device.place("/Elsewhere", "2026-10-13 09:05 Rollout plan (3)");
+  device.place("/Elsewhere", "2026-10-13 09-05 Rollout plan (3)");
   const path = await markdownFile("notes.md", "# Rollout plan\n");
 
   expect(await fly("file", path)).toBe(0);
 
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09:05 Rollout plan (3)"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-13 09-05 Rollout plan (3)"]);
 });

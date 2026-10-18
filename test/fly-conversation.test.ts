@@ -108,18 +108,18 @@ test("a Conversation Dispatch is named for when it was sent, ending in (conversa
   expect(await fly("conversation")).toBe(0);
 
   expect(device.uploads.map((u) => [u.folder, u.name])).toEqual([
-    ["/Paper Airplane", "2026-10-14 08:07 Rollout plan for sending (conversation)"],
+    ["/Paper Airplane", "2026-10-14 08-07 Rollout plan for sending (conversation)"],
   ]);
   expect(renderer.requests[0]?.header).toEqual({
     title: "Rollout plan for sending",
-    timestamp: "2026-10-14 08:07",
+    timestamp: "2026-10-14 08-07",
     project: "paper-airplane",
     kind: "Conversation",
   });
   expect(out.map((line) => JSON.parse(line))).toEqual([
     {
       id: renderer.requests[0]?.dispatchId,
-      name: "2026-10-14 08:07 Rollout plan for sending (conversation)",
+      name: "2026-10-14 08-07 Rollout plan for sending (conversation)",
       state: "landed",
     },
   ]);
@@ -132,8 +132,8 @@ test("a Conversation Dispatch uses the Session Title fixed by an earlier Reply D
   expect(await fly("conversation")).toBe(0);
 
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-13 09:01 Sending rollout",
-    "2026-10-14 08:00 Sending rollout (conversation)",
+    "2026-10-13 09-01 Sending rollout",
+    "2026-10-14 08-00 Sending rollout (conversation)",
   ]);
 });
 
@@ -148,7 +148,7 @@ test("without --title, a Session with no Session Title is refused so the agent c
   err = [];
   expect(await fly("conversation", "--title", "Ticket 04")).toBe(0);
   expect(err).toEqual([]);
-  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08:00 Ticket 04 (conversation)"]);
+  expect(device.uploads.map((u) => u.name)).toEqual(["2026-10-14 08-00 Ticket 04 (conversation)"]);
 });
 
 test("a Conversation Dispatch is never refused as a resend, and supersedes the Session's previous one", async () => {
@@ -163,10 +163,10 @@ test("a Conversation Dispatch is never refused as a resend, and supersedes the S
   expect(err).toEqual([]);
   const [first, reply, second, third] = renderer.requests.map((r) => r.dispatchId);
   expect(device.uploads.map((u) => u.name)).toEqual([
-    "2026-10-14 08:00 Rollout plan for sending (conversation)",
-    "2026-10-13 09:01 Rollout plan for sending",
-    "2026-10-14 09:30 Rollout plan for sending (conversation)",
-    "2026-10-14 09:30 Rollout plan for sending (conversation) (2)",
+    "2026-10-14 08-00 Rollout plan for sending (conversation)",
+    "2026-10-13 09-01 Rollout plan for sending",
+    "2026-10-14 09-30 Rollout plan for sending (conversation)",
+    "2026-10-14 09-30 Rollout plan for sending (conversation) (2)",
   ]);
   const dispatches = await flyLog("--session", sessionId);
   expect(dispatches.map((d: { id: string; kind: string; replyRef: string | null; supersedes: string | null }) => [
